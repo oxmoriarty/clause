@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "contract_type": "service_agreement",
+  "clauses": [
+    {
+      "id": "termination-1",
+      "text": "Either party may terminate immediately without notice."
+    }
+  ],
+  "legal_sources": [
+    {
+      "title": "Temporary smoke-test source",
+      "url": "https://www.learnnigerianlaw.com/learn/contract-law"
+    }
+  ]
+}
