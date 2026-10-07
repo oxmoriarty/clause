@@ -15,7 +15,8 @@
     "next": "16.1.0",
     "onnxruntime-web": "1.21.0",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "tesseract.js": "7.0.0"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
