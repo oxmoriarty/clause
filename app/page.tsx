@@ -146,12 +146,25 @@ export default function Home() {
     setError(null);
     resetPreview();
     setFileName(file.name);
-    const acceptedText = ["text/plain", "text/markdown", "text/html"].includes(file.type) || /\.(txt|md|html?)$/i.test(file.name);
-    if (!acceptedText) {
-      setError("This local prototype can read pasted text or .txt/.md/.html files today. PDF, DOCX, and image OCR are not enabled yet.");
+    const isDocx = file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || /\.docx$/i.test(file.name);
+    const isPlainText = ["text/plain", "text/markdown", "text/html"].includes(file.type) || /\.(txt|md|html?)$/i.test(file.name);
+    if (!isPlainText && !isDocx) {
+      setError("Clause can read pasted text and .txt, .md, .html, or .docx files locally. PDF and image OCR are not enabled yet.");
       return;
     }
-    setText(await file.text());
+    try {
+      if (isDocx) {
+        const mammoth = await import("mammoth");
+        const result = await mammoth.default.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+        if (!result.value.trim()) throw new Error("This DOCX file did not contain readable text.");
+        setText(result.value);
+      } else {
+        setText(await file.text());
+      }
+    } catch (caught) {
+      setFileName(null);
+      setError(caught instanceof Error ? `We could not read this DOCX file locally: ${caught.message}` : "We could not read this DOCX file locally.");
+    }
   }
 
   function onDrop(event: DragEvent<HTMLDivElement>) {
@@ -208,8 +221,8 @@ export default function Home() {
             <div className={["dropzone", isDragging ? "dropzone--active" : "", isAssessing ? "dropzone--locked" : ""].join(" ")} aria-disabled={isAssessing} onDragEnter={() => !isAssessing && setIsDragging(true)} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setIsDragging(false)} onDrop={onDrop}>
               <div className="dropzone__ornament">↗</div>
               <p className="dropzone__label">Drop a document</p>
-              <p className="dropzone__detail">Local text files work now.<br />PDF, DOCX, image OCR: next.</p>
-              <label className={["file-button", isAssessing ? "file-button--locked" : ""].join(" ")}>Choose a file<input type="file" accept=".txt,.md,.html,.htm,.pdf,.docx,.png,.jpg,.jpeg" onChange={onFileChange} disabled={isAssessing} /></label>
+              <p className="dropzone__detail">Local text and DOCX files work now.<br />PDF and image OCR: next.</p>
+              <label className={["file-button", isAssessing ? "file-button--locked" : ""].join(" ")}>Choose a file<input type="file" accept=".txt,.md,.html,.htm,.docx" onChange={onFileChange} disabled={isAssessing} /></label>
               {fileName && <p className="file-name">Selected: {fileName}</p>}
             </div>
           )}
