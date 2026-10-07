@@ -1,37 +1,49 @@
 # Clause
 
-Clause is a privacy-first contract-reading workspace with an explicit GenLayer verification boundary.
+Clause is a privacy-first, global contract-reading workspace. Version 1 identifies practical contractual risks, obligations, unclear wording, broad terms, and missing context. It does not make legal, enforceability, validity, compliance, or jurisdiction-specific claims.
 
-## Run locally — free
+## Privacy boundary
 
-```powershell
-npm install
-npm run dev
+The private preview stays in the browser. Clause combines local pattern-based redaction with a small, MIT-licensed named-entity model for people, organizations, and locations. The model and its WebAssembly runtime download to the user's browser on first use and are cached there; Clause never sends contract text to a redaction API or model provider. If the optional model cannot load, the built-in local privacy rules still create an editable fallback.
+
+Never submit a private agreement, signed link, credential, personal data, or confidential material to GenLayer.
+
+The Intelligent Contract receives only the redacted, user-approved contract text. That text is public blockchain calldata; the resulting assessment and stored report are public too.
+
+## Intelligent Contract
+
+`contracts/clause_assessor.py` has one write method:
+
+```text
+assess_contract(contract_text)
 ```
 
-Open `http://localhost:3000`. The first version needs no account, API key, or cloud service: pasted text and local `.txt`, `.md`, or `.html` documents receive a private preview.
+The contract creates serial assessment IDs internally, hashes the submitted text, and returns the complete public JSON report: conclusion, findings, severity, clause references, questions, missing context, and uncertainty. The leader and each validator reason independently, then explicitly compare an overall conclusion, highest severity, and substantial material-risk-category overlap. Retrieve the same report later with `get_assessment_report(assessment_id)`.
 
-## Verification boundary
-
-Never send a private document, signed private link, credential, or sensitive assessment detail to GenLayer. The contract in `contracts/clause_assessor.py` accepts only a user-approved public evidence packet. Both the URL and returned consensus result should be treated as public.
-
-## Free-only choices
-
-- GenLayer Studionet for development and contract testing.
-- Open-source local parsers/OCR in the next document-processing milestone.
-- Supabase free tier, optionally, for private accounts and storage.
-- No paid LLM or extraction API is required by this foundation.
-
-## Contract workflow
-
-Before a Studionet deploy:
+## Checks
 
 ```powershell
+python -m pip install -r requirements.txt
 genvm-lint check contracts/clause_assessor.py --json
-gltest tests/integration/ -v -s --network studionet
-genlayer network set studionet
-genlayer network info
-genlayer deploy --contract contracts/clause_assessor.py
+pytest tests/ -v
+npm run check
+npm run build
 ```
 
-Always inspect the receipt's execution result; accepted/finalized lifecycle status alone does not prove deployment execution succeeded.
+`npm run build` uses Next's Webpack compiler because the default Windows Turbopack path cannot package the browser inference runtime without symlink privileges.
+
+## Studionet
+
+Deploy this revised contract as a new Studionet instance. Call `assess_contract` with only a non-sensitive, redacted contract text. Confirm transaction execution result is `SUCCESS`; its output contains the findings and generated serial ID.
+
+### Clause app connection
+
+The app uses the free `genlayer-js` browser-wallet SDK. It does not hold a private key or need a paid backend. Create a local `.env.local` file from `.env.example`, then set the public address of the deployed `ClauseAssessor` instance:
+
+```text
+NEXT_PUBLIC_CLAUSE_CONTRACT_ADDRESS=0xYourDeployedContractAddress
+```
+
+Restart `npm run dev`. A user first receives a private, local preview. To request consensus, they must manually redact and explicitly approve the exact public text that will be passed to `assess_contract`. The app waits for an `ACCEPTED` result with a successful execution return, then displays the on-chain report.
+
+The standalone campaign package is in `contract-risk-assessor/`.

@@ -12,7 +12,6 @@ export type Finding = {
 
 export type Assessment = {
   contractType: string;
-  governingLaw: string | null;
   confidenceNote: string | null;
   summary: string;
   findings: Finding[];
@@ -92,7 +91,6 @@ export function createPrivatePreview(text: string): Assessment {
       evidence: rule.evidence
     }));
 
-  const governingLaw = text.match(/(?:governed by|governing law(?: of| shall be))\s+(?:the laws of\s+)?([^.;\n]{3,90})/i)?.[1]?.trim() ?? null;
   const contractType = /non[- ]disclosure|\bnda\b/i.test(text)
     ? "Non-disclosure agreement"
     : /independent contractor|services? agreement|statement of work/i.test(text)
@@ -113,7 +111,6 @@ export function createPrivatePreview(text: string): Assessment {
 
   return {
     contractType,
-    governingLaw,
     confidenceNote: "This is a local, rules-based private preview. It is not legal advice and is not GenLayer-verified.",
     summary: findings.length
       ? `${findings.length} clause${findings.length === 1 ? "" : "s"} deserves attention before you sign.`
