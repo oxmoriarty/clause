@@ -36,7 +36,7 @@ export default function DashboardPage() {
     return () => { active = false; };
   }, [address]);
 
-  return <ProtectedPage><main>
+  return <ProtectedPage restoringTitle="Loading your Assessments…" restoringDescription="Finding assessments associated with your wallet."><main>
     <AppNav />
     <section className="dashboard-history shell" aria-labelledby="recent-assessments-title">
       <div className="section-heading"><div><h2 id="recent-assessments-title">Recent Assessments</h2></div><Link className="text-button" href="/assessments">View all assessments</Link></div>

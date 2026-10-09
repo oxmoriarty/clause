@@ -48,6 +48,7 @@ class ClauseAssessor(gl.Contract):
     @gl.public.view
     def get_assessment_summaries_for_wallet(self, wallet_address: str) -> str:
         """Return this wallet's public assessment summaries, newest first."""
+        wallet_address = wallet_address.lower()
         assessment_ids = json.loads(self.owner_assessment_ids.get(wallet_address, "[]"))
         summaries = []
         for index in range(len(assessment_ids) - 1, -1, -1):
@@ -72,7 +73,7 @@ class ClauseAssessor(gl.Contract):
         method is an ownership filter for Clause's wallet-based interface, not
         a confidentiality boundary.
         """
-        if self.assessment_owners.get(assessment_id, "") != wallet_address:
+        if self.assessment_owners.get(assessment_id, "") != wallet_address.lower():
             return ""
 
         report = self.assessment_reports.get(assessment_id, "")
@@ -253,7 +254,7 @@ invent facts beyond contract_text.
 
         result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
         assessment_id = str(self.next_assessment_number)
-        owner = str(gl.message.sender_address)
+        owner = str(gl.message.sender_address).lower()
         submitted_at = str(gl.message_raw["datetime"])
         first_line = contract_text.strip().split("\n")[0].strip()
         title = " ".join(first_line.split())[:120] or "Contract assessment"

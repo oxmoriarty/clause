@@ -1,6 +1,7 @@
 import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
+import { getAddress } from "viem";
 
 export type VerifiedFinding = {
   id: string;
@@ -50,6 +51,16 @@ type ReceiptWithConsensus = {
 };
 
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
+const historyAddressCache = new Map<string, string>();
+
+function historyAddressCandidates(walletAddress: string) {
+  return [...new Set([
+    historyAddressCache.get(walletAddress),
+    walletAddress.toLowerCase(),
+    walletAddress,
+    getAddress(walletAddress),
+  ].filter((address): address is string => Boolean(address)))];
+}
 const consensusPollIntervalMs = 3_000;
 const consensusPollRetries = 120;
 
@@ -124,27 +135,51 @@ function readClient() {
 }
 
 export async function getAssessmentSummaries(walletAddress: string): Promise<AssessmentSummary[]> {
-  const result = await readClient().readContract({
-    address: contractAddress as `0x${string}`,
-    functionName: "get_assessment_summaries_for_wallet",
-    args: [walletAddress],
-  });
-  const summaries = parseReadResult<unknown>(result, "Clause could not load assessment history from this contract.");
-  if (!Array.isArray(summaries)) throw new Error("Clause received an invalid assessment history response.");
-  return summaries as AssessmentSummary[];
+  const walletAddressCandidates = historyAddressCandidates(walletAddress);
+  const readSummaries = async (address: string) => {
+    const result = await readClient().readContract({
+      address: contractAddress as `0x${string}`,
+      functionName: "get_assessment_summaries_for_wallet",
+      args: [address],
+    });
+    const summaries = parseReadResult<unknown>(result, "Clause could not load assessment history from this contract.");
+    if (!Array.isArray(summaries)) throw new Error("Clause received an invalid assessment history response.");
+    return summaries as AssessmentSummary[];
+  };
+
+  for (const address of walletAddressCandidates) {
+    const summaries = await readSummaries(address);
+    if (summaries.length) {
+      historyAddressCache.set(walletAddress, address);
+      return summaries;
+    }
+  }
+  return [];
 }
 
 export async function getAssessmentForWallet(walletAddress: string, assessmentId: string): Promise<StoredAssessment | null> {
-  const result = await readClient().readContract({
-    address: contractAddress as `0x${string}`,
-    functionName: "get_assessment_for_wallet",
-    args: [walletAddress, assessmentId],
-  });
-  const raw = getAssessmentResult(result);
-  if (!raw) return null;
-  const assessment = parseReadResult<unknown>(raw, "Clause could not load this assessment from the contract.");
-  if (!assessment || typeof assessment !== "object") throw new Error("Clause received an invalid assessment record.");
-  return assessment as StoredAssessment;
+  const walletAddressCandidates = historyAddressCandidates(walletAddress);
+  const readAssessment = async (address: string) => {
+    const result = await readClient().readContract({
+      address: contractAddress as `0x${string}`,
+      functionName: "get_assessment_for_wallet",
+      args: [address, assessmentId],
+    });
+    const raw = getAssessmentResult(result);
+    if (!raw) return null;
+    const assessment = parseReadResult<unknown>(raw, "Clause could not load this assessment from the contract.");
+    if (!assessment || typeof assessment !== "object") throw new Error("Clause received an invalid assessment record.");
+    return assessment as StoredAssessment;
+  };
+
+  for (const address of walletAddressCandidates) {
+    const assessment = await readAssessment(address);
+    if (assessment) {
+      historyAddressCache.set(walletAddress, address);
+      return assessment;
+    }
+  }
+  return null;
 }
 
 export async function connectStudionetWallet({

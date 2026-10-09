@@ -19,6 +19,8 @@ const demoAgreement = [
   "14. Disputes. Any dispute shall be resolved by binding arbitration in the courts of the Client's chosen venue.",
 ].join("\n");
 
+const severityLevels = ["high", "moderate", "low"] as const;
+
 function AttentionMark({ level }: { level: string }) {
   return <span className={["attention attention--", level.replaceAll("_", "-")].join("")}>{level.replaceAll("_", " ")}</span>;
 }
@@ -61,6 +63,11 @@ export default function Home() {
   const wordCount = useMemo(() => (visibleText.trim() ? visibleText.trim().split(/\s+/).length : 0), [visibleText]);
   const hasSubmittablePublicText = publicText.trim().length >= 20 && publicText.length <= 50_000;
   const canSubmitAssessment = Boolean(isPublicPreviewReady && walletAddress && publicTextApproved && isContractConfigured && hasSubmittablePublicText);
+  const isPublicTextLocked = isAssessing || isSubmitting || Boolean(verifiedAssessment);
+  const findingSeverityCounts = useMemo(() => severityLevels.map((severity) => ({
+    severity,
+    count: verifiedAssessment?.findings.filter((finding) => finding.severity === severity).length ?? 0,
+  })), [verifiedAssessment]);
 
   useEffect(() => () => {
     cameraStream.current?.getTracks().forEach((track) => track.stop());
@@ -328,9 +335,13 @@ export default function Home() {
         <div className={["intake-grid", isPublicPreviewReady ? "intake-grid--review" : ""].join(" ")}>
           {isPublicPreviewReady ? (
             <aside className="private-brief" aria-label="Private contract preview">
-              <h3>No assessment yet.</h3>
-              <div className="private-boundary"><p><span>01</span> Review the editable copy on the right.</p><p><span>02</span> Approve only text you are comfortable making public.</p><p><span>03</span> Submit to GenLayer for the first assessment.</p></div>
-              <button className="text-button private-brief__restart" onClick={resetPreview} disabled={isSubmitting}>Return to original contract</button>
+              <h3>{verifiedAssessment ? "Assessment complete." : "No assessment yet."}</h3>
+              {verifiedAssessment ? (
+                <div className="private-boundary"><p><span>01</span> The submitted copy is locked.</p><p><span>02</span> Review your assessment below.</p></div>
+              ) : (
+                <div className="private-boundary"><p><span>01</span> Review the editable copy on the right.</p><p><span>02</span> Approve only text you are comfortable making public.</p><p><span>03</span> Submit to GenLayer for the first assessment.</p></div>
+              )}
+              <button className="text-button private-brief__restart" onClick={resetPreview} disabled={isPublicTextLocked}>Return to original contract</button>
             </aside>
           ) : (
             <div className={["dropzone", isDragging ? "dropzone--active" : "", isAssessing || isReadingUpload ? "dropzone--locked" : ""].join(" ")} aria-disabled={isAssessing || isReadingUpload} onDragEnter={() => !isAssessing && !isReadingUpload && setIsDragging(true)} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setIsDragging(false)} onDrop={onDrop}>
@@ -347,19 +358,19 @@ export default function Home() {
             <div className="paste-panel__top"><label htmlFor="agreement">{isPublicPreviewReady ? "Editable public-safe copy" : "Or paste it here"}</label><span>{wordCount.toLocaleString()} words</span></div>
             {isPublicPreviewReady && <p className="redaction-banner"><span>●</span> {entityDetection === "local_model" ? "Local name, organization and location detection plus privacy rules ran in your browser." : "Built-in privacy rules ran locally."} No contract assessment has been performed.</p>}
             {isAssessing && <div className="redaction-processing" role="status" aria-live="polite"><div className="redaction-processing__copy"><span className="redaction-processing__pulse" aria-hidden="true" /><div><strong>Creating your private preview</strong><p>Clause is finding sensitive details locally. Your text and document controls are locked until the redacted copy is ready.</p></div></div><button className="redaction-processing__cancel" onClick={cancelPreview}>Cancel</button><div className="redaction-processing__bar" role="progressbar" aria-label="Creating private preview" aria-valuetext="Redacting sensitive information locally"><span /></div></div>}
-            <textarea id="agreement" value={visibleText} disabled={isAssessing || isReadingUpload} readOnly={isSubmitting} aria-readonly={isSubmitting} onChange={(event) => {
+            <textarea id="agreement" value={visibleText} disabled={isAssessing || isReadingUpload} readOnly={isPublicTextLocked} aria-readonly={isPublicTextLocked} onChange={(event) => {
               if (isPublicPreviewReady) { setPublicText(event.target.value); setPublicTextApproved(false); } else { setText(event.target.value); }
               setVerifiedAssessment(null);
             }} placeholder="Paste the contract text here. Clause will create a private preview and a redacted, editable review copy." />
             <div className="paste-panel__bottom">
-              {isPublicPreviewReady ? <><span className="redaction-count">{redactionSummary?.total ?? 0} automatic redactions</span><button className="text-button" onClick={() => void analyze()} disabled={isAssessing || isReadingUpload || isSubmitting}>Recreate redacted copy</button></> : <><button className="text-button" onClick={() => { setText(demoAgreement); resetPreview(); }} disabled={isAssessing || isReadingUpload}>Use sample agreement</button><button className="primary-button" onClick={() => void analyze()} disabled={isAssessing || isReadingUpload || text.trim().length < 80}>{isAssessing ? "Creating private copy…" : "Create private copy"}<span>→</span></button></>}
+              {isPublicPreviewReady ? <><span className="redaction-count">{redactionSummary?.total ?? 0} automatic redactions</span><button className="text-button" onClick={() => void analyze()} disabled={isPublicTextLocked || isReadingUpload}>Recreate redacted copy</button></> : <><button className="text-button" onClick={() => { setText(demoAgreement); resetPreview(); }} disabled={isAssessing || isReadingUpload}>Use sample agreement</button><button className="primary-button" onClick={() => void analyze()} disabled={isAssessing || isReadingUpload || text.trim().length < 80}>{isAssessing ? "Creating private copy…" : "Create private copy"}<span>→</span></button></>}
             </div>
           </div>
         </div>
 
         {error && <p className="message message--error" role="alert">{error}</p>}
 
-        {isPublicPreviewReady && <div className="submission-bar">
+        {isPublicPreviewReady && !verifiedAssessment && <div className="submission-bar">
           <div><p className="eyebrow">Submission check</p><p>Automatic redaction removed {redactionSummary?.total ?? 0} high-confidence items. It may miss context-specific details. Edit this copy until it is safe to disclose. No risk assessment has been made at this stage.</p>{entityDetectionNote && <p className="redaction-model-note">{entityDetectionNote}</p>}<label className="public-consent"><input type="checkbox" checked={publicTextApproved} disabled={isSubmitting} onChange={(event) => setPublicTextApproved(event.target.checked)} /><span>I reviewed this exact copy and approve it for assessment.</span></label></div>
           <div className="submission-bar__action">{submissionStage && <p className="submission-stage" role="status">{submissionStage}</p>}{!walletAddress ? <button className="secondary-button public-submit" onClick={() => void connectWallet()} disabled={isConnectingWallet}>{isConnectingWallet ? "Connecting…" : "Connect wallet"}<span>↗</span></button> : <button className="secondary-button public-submit" onClick={() => void submitToGenLayer()} disabled={!canSubmitAssessment || isSubmitting}>{isSubmitting ? "Awaiting assessment…" : "Submit"}<span>↗</span></button>}</div>
         </div>}
@@ -367,7 +378,7 @@ export default function Home() {
 
       {verifiedAssessment && <section className="assessment shell verified-assessment" id="verified-assessment" aria-labelledby="verified-title">
         <div className="assessment__top"><div><h2 id="verified-title">Your contract assessment is ready.</h2></div><AttentionMark level={verifiedAssessment.conclusion} /></div>
-        <div className="verified-summary"><div><p className="brief-summary__label">Consensus conclusion</p><h3>{conclusionLabel(verifiedAssessment.conclusion)}</h3></div><dl><div><dt>Assessment</dt><dd>#{verifiedAssessment.assessment_id}</dd></div></dl></div>
+        <div className="verified-summary"><div><p className="brief-summary__label">Consensus conclusion</p><h3>{conclusionLabel(verifiedAssessment.conclusion)}</h3></div><dl><div><dt>Assessment</dt><dd>#{verifiedAssessment.assessment_id}</dd></div>{findingSeverityCounts.map(({ severity, count }) => <div key={severity}><dt>{severity}</dt><dd>{count}</dd></div>)}</dl></div>
         <div className="findings-header"><p className="eyebrow">Consensus findings</p><span>{verifiedAssessment.findings.length} found</span></div>
         <div className="findings">{verifiedAssessment.findings.map((finding) => <article className="finding" key={finding.id}><div className="finding__meta"><AttentionMark level={finding.severity} /><span>{finding.category}</span></div><h3>{finding.clause_reference}</h3><p>{finding.summary}</p><div className="finding__ask"><span>Consider asking</span>{finding.question}</div></article>)}</div>
       </section>}

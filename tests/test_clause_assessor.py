@@ -101,6 +101,8 @@ def test_records_the_redacted_contract_and_report_under_the_submitter_wallet(dir
     assert summaries[0]["finding_count"] == 1
     assert record["contract_text"] == CONTRACT_TEXT
     assert record["report"] == expected_report("1")
+    assert json.loads(contract.get_assessment_summaries_for_wallet(owner.upper())) == summaries
+    assert json.loads(contract.get_assessment_for_wallet(owner.upper(), "1")) == record
     assert contract.get_assessment_for_wallet("0x" + "1" * 40, "1") == ""
 
 
