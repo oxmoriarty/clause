@@ -86,6 +86,24 @@ def test_returns_serial_assessment_with_findings_and_accepts_agreement(direct_vm
     assert json.loads(contract.get_assessment_report("1")) == first
 
 
+def test_records_the_redacted_contract_and_report_under_the_submitter_wallet(direct_vm, direct_deploy):
+    mock_assessment(direct_vm)
+    contract = direct_deploy(CONTRACT_PATH)
+    contract.assess_contract(CONTRACT_TEXT)
+
+    owner = contract.assessment_owners.get("1", "")
+    summaries = json.loads(contract.get_assessment_summaries_for_wallet(owner))
+    record = json.loads(contract.get_assessment_for_wallet(owner, "1"))
+
+    assert len(summaries) == 1
+    assert summaries[0]["assessment_id"] == "1"
+    assert summaries[0]["title"] == "CONSULTING SERVICES AGREEMENT"
+    assert summaries[0]["finding_count"] == 1
+    assert record["contract_text"] == CONTRACT_TEXT
+    assert record["report"] == expected_report("1")
+    assert contract.get_assessment_for_wallet("0x" + "1" * 40, "1") == ""
+
+
 def test_validator_rejects_a_materially_different_assessment(direct_vm, direct_deploy):
     mock_assessment(direct_vm)
     contract = direct_deploy(CONTRACT_PATH)

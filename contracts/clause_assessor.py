@@ -21,11 +21,21 @@ class ClauseAssessor(gl.Contract):
     next_assessment_number: u256
     assessment_statuses: TreeMap[str, str]
     assessment_reports: TreeMap[str, str]
+    assessment_owners: TreeMap[str, str]
+    assessment_titles: TreeMap[str, str]
+    assessment_contracts: TreeMap[str, str]
+    assessment_dates: TreeMap[str, str]
+    owner_assessment_ids: TreeMap[str, str]
 
     def __init__(self):
         self.next_assessment_number = u256(1)
         self.assessment_statuses = TreeMap()
         self.assessment_reports = TreeMap()
+        self.assessment_owners = TreeMap()
+        self.assessment_titles = TreeMap()
+        self.assessment_contracts = TreeMap()
+        self.assessment_dates = TreeMap()
+        self.owner_assessment_ids = TreeMap()
 
     @gl.public.view
     def get_assessment_status(self, assessment_id: str) -> str:
@@ -34,6 +44,52 @@ class ClauseAssessor(gl.Contract):
     @gl.public.view
     def get_assessment_report(self, assessment_id: str) -> str:
         return self.assessment_reports.get(assessment_id, "")
+
+    @gl.public.view
+    def get_assessment_summaries_for_wallet(self, wallet_address: str) -> str:
+        """Return this wallet's public assessment summaries, newest first."""
+        assessment_ids = json.loads(self.owner_assessment_ids.get(wallet_address, "[]"))
+        summaries = []
+        for index in range(len(assessment_ids) - 1, -1, -1):
+            assessment_id = assessment_ids[index]
+            report = json.loads(self.assessment_reports.get(assessment_id, "{}"))
+            summaries.append(
+                {
+                    "assessment_id": assessment_id,
+                    "title": self.assessment_titles.get(assessment_id, "Contract assessment"),
+                    "assessed_at": self.assessment_dates.get(assessment_id, ""),
+                    "conclusion": self.assessment_statuses.get(assessment_id, "unable_to_determine"),
+                    "finding_count": len(report.get("findings", [])),
+                }
+            )
+        return json.dumps(summaries, sort_keys=True, separators=(",", ":"))
+
+    @gl.public.view
+    def get_assessment_for_wallet(self, wallet_address: str, assessment_id: str) -> str:
+        """Return a complete public record only when it belongs to wallet_address.
+
+        All Intelligent Contract state remains publicly readable on-chain. This
+        method is an ownership filter for Clause's wallet-based interface, not
+        a confidentiality boundary.
+        """
+        if self.assessment_owners.get(assessment_id, "") != wallet_address:
+            return ""
+
+        report = self.assessment_reports.get(assessment_id, "")
+        if not report:
+            return ""
+
+        return json.dumps(
+            {
+                "assessment_id": assessment_id,
+                "title": self.assessment_titles.get(assessment_id, "Contract assessment"),
+                "assessed_at": self.assessment_dates.get(assessment_id, ""),
+                "contract_text": self.assessment_contracts.get(assessment_id, ""),
+                "report": json.loads(report),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     @gl.public.write
     def assess_contract(self, contract_text: str) -> str:
@@ -197,6 +253,10 @@ invent facts beyond contract_text.
 
         result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
         assessment_id = str(self.next_assessment_number)
+        owner = str(gl.message.sender_address)
+        submitted_at = str(gl.message_raw["datetime"])
+        first_line = contract_text.strip().split("\n")[0].strip()
+        title = " ".join(first_line.split())[:120] or "Contract assessment"
         contract_digest = hashlib.sha256(contract_text.encode("utf-8")).hexdigest()
         commitment = result["conclusion"] + ":" + contract_digest
         report = {
@@ -210,5 +270,12 @@ invent facts beyond contract_text.
         serialized_report = json.dumps(report, sort_keys=True, separators=(",", ":"))
         self.assessment_statuses[assessment_id] = result["conclusion"]
         self.assessment_reports[assessment_id] = serialized_report
+        self.assessment_owners[assessment_id] = owner
+        self.assessment_titles[assessment_id] = title
+        self.assessment_contracts[assessment_id] = contract_text
+        self.assessment_dates[assessment_id] = submitted_at
+        owner_assessment_ids = json.loads(self.owner_assessment_ids.get(owner, "[]"))
+        owner_assessment_ids.append(assessment_id)
+        self.owner_assessment_ids[owner] = json.dumps(owner_assessment_ids, separators=(",", ":"))
         self.next_assessment_number = self.next_assessment_number + u256(1)
         return serialized_report
