@@ -32,6 +32,7 @@ ASSESSMENT = {
         "overall_conclusion": "attention_required",
         "highest_severity": "high",
         "material_risk_categories": ["termination"],
+        "material_risk_anchors": [{"category": "termination", "clause_reference": "Clause 12"}],
     },
 }
 DISAGREEING_ASSESSMENT = {
@@ -52,12 +53,97 @@ DISAGREEING_ASSESSMENT = {
         "overall_conclusion": "attention_required",
         "highest_severity": "high",
         "material_risk_categories": ["liability"],
+        "material_risk_anchors": [{"category": "liability", "clause_reference": "10"}],
+    },
+}
+NEARLY_AGREEING_ASSESSMENT = {
+    "conclusion": "attention_required",
+    "findings": [
+        {
+            "id": "termination-12",
+            "category": "termination",
+            "severity": "moderate",
+            "clause_reference": "12",
+            "summary": "Immediate termination can leave no cure opportunity.",
+            "question": "Which breaches permit this remedy and is there a cure period?",
+        }
+    ],
+    "missing_context": [],
+    "uncertainty": [],
+    "consensus_core": {
+        "overall_conclusion": "attention_required",
+        "highest_severity": "moderate",
+        "material_risk_categories": ["termination"],
+        "material_risk_anchors": [{"category": "termination", "clause_reference": "12"}],
+    },
+}
+BROADER_BUT_AGREEING_ASSESSMENT = {
+    "conclusion": "attention_required",
+    "findings": [
+        {
+            "id": "termination-12",
+            "category": "termination",
+            "severity": "high",
+            "clause_reference": "12",
+            "summary": "Immediate termination can leave no cure opportunity.",
+            "question": "Which breaches permit this remedy and is there a cure period?",
+        },
+        {
+            "id": "liability-10",
+            "category": "liability",
+            "severity": "moderate",
+            "clause_reference": "10",
+            "summary": "The liability wording is broad.",
+            "question": "Can the exposure be capped?",
+        },
+        {
+            "id": "scope-missing",
+            "category": "scope",
+            "severity": "moderate",
+            "clause_reference": "Agreement",
+            "summary": "The agreement does not define the service scope.",
+            "question": "Can the deliverables and responsibilities be defined?",
+        },
+    ],
+    "missing_context": [],
+    "uncertainty": [],
+    "consensus_core": {
+        "overall_conclusion": "attention_required",
+        "highest_severity": "high",
+        "material_risk_categories": ["termination", "liability", "scope"],
+        "material_risk_anchors": [
+            {"category": "termination", "clause_reference": "12"},
+            {"category": "liability", "clause_reference": "10"},
+            {"category": "scope", "clause_reference": "Agreement"},
+        ],
+    },
+}
+SAME_CATEGORY_DIFFERENT_CLAUSE_ASSESSMENT = {
+    "conclusion": "attention_required",
+    "findings": [
+        {
+            "id": "termination-3",
+            "category": "termination",
+            "severity": "high",
+            "clause_reference": "3",
+            "summary": "The termination clause has no cure opportunity.",
+            "question": "Can the termination remedy include a cure period?",
+        }
+    ],
+    "missing_context": [],
+    "uncertainty": [],
+    "consensus_core": {
+        "overall_conclusion": "attention_required",
+        "highest_severity": "high",
+        "material_risk_categories": ["termination"],
+        "material_risk_anchors": [{"category": "termination", "clause_reference": "3"}],
     },
 }
 
 
-def mock_assessment(direct_vm, assessment=ASSESSMENT):
+def mock_assessment(direct_vm, assessment=ASSESSMENT, semantic_accept=True):
     direct_vm.mock_llm(r".*global contract-risk assessor.*", json.dumps(assessment))
+    direct_vm.mock_llm(r".*strict semantic comparator.*", json.dumps({"accept": semantic_accept}))
 
 
 def expected_report(assessment_id: str):
@@ -113,6 +199,50 @@ def test_validator_rejects_a_materially_different_assessment(direct_vm, direct_d
 
     direct_vm.clear_mocks()
     mock_assessment(direct_vm, DISAGREEING_ASSESSMENT)
+
+    assert direct_vm.run_validator() is False
+
+
+def test_validator_accepts_the_same_material_risk_one_severity_band_apart(direct_vm, direct_deploy):
+    mock_assessment(direct_vm)
+    contract = direct_deploy(CONTRACT_PATH)
+    contract.assess_contract(CONTRACT_TEXT)
+
+    direct_vm.clear_mocks()
+    mock_assessment(direct_vm, NEARLY_AGREEING_ASSESSMENT)
+
+    assert direct_vm.run_validator() is True
+
+
+def test_validator_accepts_one_shared_risk_when_its_report_is_broader(direct_vm, direct_deploy):
+    mock_assessment(direct_vm)
+    contract = direct_deploy(CONTRACT_PATH)
+    contract.assess_contract(CONTRACT_TEXT)
+
+    direct_vm.clear_mocks()
+    mock_assessment(direct_vm, BROADER_BUT_AGREEING_ASSESSMENT)
+
+    assert direct_vm.run_validator() is True
+
+
+def test_validator_rejects_the_same_category_at_a_different_clause(direct_vm, direct_deploy):
+    mock_assessment(direct_vm)
+    contract = direct_deploy(CONTRACT_PATH)
+    contract.assess_contract(CONTRACT_TEXT)
+
+    direct_vm.clear_mocks()
+    mock_assessment(direct_vm, SAME_CATEGORY_DIFFERENT_CLAUSE_ASSESSMENT)
+
+    assert direct_vm.run_validator() is False
+
+
+def test_validator_rejects_when_the_semantic_comparison_rejects(direct_vm, direct_deploy):
+    mock_assessment(direct_vm)
+    contract = direct_deploy(CONTRACT_PATH)
+    contract.assess_contract(CONTRACT_TEXT)
+
+    direct_vm.clear_mocks()
+    mock_assessment(direct_vm, ASSESSMENT, semantic_accept=False)
 
     assert direct_vm.run_validator() is False
 

@@ -18,7 +18,7 @@ The Intelligent Contract receives only the redacted, user-approved contract text
 assess_contract(contract_text)
 ```
 
-The contract creates serial assessment IDs internally, hashes the submitted text, and returns the complete public JSON report: conclusion, findings, severity, clause references, questions, missing context, and uncertainty. The leader and each validator reason independently, then explicitly compare an overall conclusion, highest severity, and substantial material-risk-category overlap. Retrieve the same report later with `get_assessment_report(assessment_id)`.
+The contract creates serial assessment IDs internally, hashes the submitted text, and returns the complete public JSON report: conclusion, findings, severity, clause references, questions, missing context, and uncertainty. The leader and each validator reason independently. A validator must first pass a factual guardrail—same conclusion, an adjacent-or-closer highest-severity band, and at least one shared material-risk anchor (a fixed category at the same clause or heading). It then performs a strict semantic comparison, accepting only when roughly 70% of the leader's material findings are supported by its independent assessment. Different wording and extra findings are allowed; a materially contradictory report is rejected. Retrieve the same report later with `get_assessment_report(assessment_id)`.
 
 ## Checks
 
