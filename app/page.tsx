@@ -1,20 +1,22 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppNav } from "@/components/app-nav";
 import { useWallet } from "@/components/wallet-provider";
 
 export default function Home() {
   const router = useRouter();
-  const { address, connect, isConnecting } = useWallet();
+  const { address, openWalletChooser, isConnecting } = useWallet();
+  const [shouldOpenDashboard, setShouldOpenDashboard] = useState(false);
 
-  async function startNow() {
-    try {
-      await connect();
-      router.push("/dashboard");
-    } catch {
-      // The wallet already provides the user with the rejection reason.
-    }
+  useEffect(() => {
+    if (shouldOpenDashboard && address) router.push("/dashboard");
+  }, [address, router, shouldOpenDashboard]);
+
+  function startNow() {
+    setShouldOpenDashboard(true);
+    openWalletChooser();
   }
 
   return <main>
@@ -24,7 +26,7 @@ export default function Home() {
       <h1>Know the terms<br />before they become<br /><em>your obligations.</em></h1>
       <p className="landing-hero__lede">Clause helps you find risks in contracts before you sign them.</p>
       <div className="landing-hero__actions">
-        <button className="primary-button landing-hero__start" onClick={() => void (address ? router.push("/dashboard") : startNow())} disabled={isConnecting}>{isConnecting ? "Connecting wallet…" : address ? "Go to dashboard" : "Start now"}<span>→</span></button>
+        <button className="primary-button landing-hero__start" onClick={() => address ? router.push("/dashboard") : startNow()} disabled={isConnecting}>{isConnecting ? "Connecting wallet…" : address ? "Go to dashboard" : "Start now"}<span>→</span></button>
         <p>Your original contract stays on your device while you prepare a redacted copy for assessment.</p>
       </div>
     </section>

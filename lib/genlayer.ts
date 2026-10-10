@@ -37,8 +37,19 @@ export type StoredAssessment = {
   report: VerifiedAssessment;
 };
 
-type BrowserProvider = {
+export type BrowserProvider = {
   request: (request: { method: string; params?: unknown[] }) => Promise<unknown>;
+  providers?: BrowserProvider[];
+  isMetaMask?: boolean;
+  isRabby?: boolean;
+  isTrust?: boolean;
+  isTrustWallet?: boolean;
+};
+
+export type WalletOption = {
+  id: string;
+  name: string;
+  provider: BrowserProvider;
 };
 
 type ReceiptWithConsensus = {
@@ -54,6 +65,63 @@ type ReceiptWithConsensus = {
 
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const historyAddressCache = new Map<string, string>();
+const studionetChainId = "0xf22f";
+let activeWalletProvider: BrowserProvider | null = null;
+
+function walletName(provider: BrowserProvider, announcedName?: string) {
+  if (provider.isRabby) return "Rabby Wallet";
+  if (provider.isTrust || provider.isTrustWallet) return "Trust Wallet";
+  if (provider.isMetaMask) return "MetaMask";
+  return announcedName?.trim() || "Browser wallet";
+}
+
+function walletId(provider: BrowserProvider, index: number, announcedId?: string) {
+  if (announcedId) return announcedId;
+  if (provider.isRabby) return "io.rabby";
+  if (provider.isTrust || provider.isTrustWallet) return "com.trustwallet";
+  if (provider.isMetaMask) return "io.metamask";
+  return `browser-wallet-${index}`;
+}
+
+export async function discoverWallets(): Promise<WalletOption[]> {
+  if (typeof window === "undefined") return [];
+
+  const options: WalletOption[] = [];
+  const seenProviders = new Set<BrowserProvider>();
+  const add = (provider: BrowserProvider | undefined, announced?: { name?: string; rdns?: string }) => {
+    if (!provider || typeof provider.request !== "function" || seenProviders.has(provider)) return;
+    seenProviders.add(provider);
+    options.push({
+      id: walletId(provider, options.length, announced?.rdns),
+      name: walletName(provider, announced?.name),
+      provider,
+    });
+  };
+
+  const announce = (event: Event) => {
+    const detail = (event as CustomEvent<{ info?: { name?: string; rdns?: string }; provider?: BrowserProvider }>).detail;
+    add(detail?.provider, detail?.info);
+  };
+
+  window.addEventListener("eip6963:announceProvider", announce);
+  window.dispatchEvent(new Event("eip6963:requestProvider"));
+
+  const injected = (window as Window & { ethereum?: BrowserProvider }).ethereum;
+  if (injected?.providers?.length) {
+    injected.providers.forEach((provider) => add(provider));
+  }
+  add(injected);
+
+  // EIP-6963 wallet extensions can announce asynchronously after the request.
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+  window.removeEventListener("eip6963:announceProvider", announce);
+
+  return options;
+}
+
+export function setActiveWalletProvider(provider: BrowserProvider | null) {
+  activeWalletProvider = provider;
+}
 
 function historyAddressCandidates(walletAddress: string) {
   return [...new Set([
@@ -70,7 +138,7 @@ export const contractAddress = process.env.NEXT_PUBLIC_CLAUSE_CONTRACT_ADDRESS ?
 export const isContractConfigured = addressPattern.test(contractAddress);
 
 function getBrowserProvider(): BrowserProvider {
-  const provider = (window as Window & { ethereum?: BrowserProvider }).ethereum;
+  const provider = activeWalletProvider ?? (window as Window & { ethereum?: BrowserProvider }).ethereum;
 
   if (!provider) {
     throw new Error(
@@ -82,18 +150,47 @@ function getBrowserProvider(): BrowserProvider {
 }
 
 export function userFacingSubmissionError(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message;
-
   if (error && typeof error === "object") {
     const walletError = error as { code?: unknown; message?: unknown; shortMessage?: unknown };
     if (walletError.code === 4001) return "You cancelled the wallet request. No assessment was submitted.";
     if (walletError.code === 4900 || walletError.code === 4901) return "Your wallet disconnected. Reconnect it and try again.";
-    if (walletError.code === 4902) return "Your wallet could not add or switch to GenLayer Studionet. Open Clause in a compatible wallet browser and try again.";
+    if (walletError.code === 4902) return "Your wallet could not add or switch to GenLayer Studionet. Add the network in your wallet, then try again.";
     const message = typeof walletError.shortMessage === "string" ? walletError.shortMessage : walletError.message;
     if (typeof message === "string" && message.trim()) return message.trim();
   }
 
+  if (error instanceof Error && error.message) return error.message;
+
   return "We could not submit the assessment. Check your wallet connection and try again.";
+}
+
+async function ensureStudionetNetwork(provider: BrowserProvider) {
+  const chainParams = {
+    chainId: studionetChainId,
+    chainName: "GenLayer Studionet",
+    nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
+    rpcUrls: ["https://studio.genlayer.com/api"],
+    blockExplorerUrls: ["https://explorer-studio.genlayer.com"],
+  };
+
+  const currentChainId = await provider.request({ method: "eth_chainId" });
+  if (currentChainId === studionetChainId) return;
+
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: studionetChainId }],
+    });
+  } catch (switchError) {
+    const code = switchError && typeof switchError === "object" ? (switchError as { code?: unknown }).code : undefined;
+    if (code !== 4902) throw switchError;
+
+    await provider.request({ method: "wallet_addEthereumChain", params: [chainParams] });
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: studionetChainId }],
+    });
+  }
 }
 
 function parseAssessment(value: string): VerifiedAssessment {
@@ -202,11 +299,13 @@ export async function getAssessmentForWallet(walletAddress: string, assessmentId
 export async function connectStudionetWallet({
   onStage,
   requestAccountSelection = false,
+  provider: suppliedProvider,
 }: {
   onStage?: (stage: string) => void;
   requestAccountSelection?: boolean;
+  provider?: BrowserProvider;
 } = {}): Promise<string> {
-  const provider = getBrowserProvider();
+  const provider = suppliedProvider ?? getBrowserProvider();
   onStage?.("Choose the wallet account you want to connect.");
 
   if (requestAccountSelection) {
@@ -228,14 +327,12 @@ export async function connectStudionetWallet({
     throw new Error("Your wallet did not provide a valid account address.");
   }
 
-  const client = createClient({
-    chain: studionet,
-    account: account as `0x${string}`,
-    provider,
-  });
-
   onStage?.("Switching your wallet to GenLayer Studionet…");
-  await client.connect("studionet");
+  // GenLayerJS 1.x's `client.connect()` also attempts to install a MetaMask
+  // Snap. Clause uses the standard EIP-1193 path instead, which works with
+  // wallets that support custom networks (MetaMask, Rabby, Trust, and others).
+  await ensureStudionetNetwork(provider);
+  setActiveWalletProvider(provider);
   return account;
 }
 

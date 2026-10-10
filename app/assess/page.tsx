@@ -57,7 +57,7 @@ export default function Home() {
   const cameraVideo = useRef<HTMLVideoElement | null>(null);
   const cameraStream = useRef<MediaStream | null>(null);
   const cameraRun = useRef(0);
-  const { address: walletAddress, connect: connectWallet, isConnecting: isConnectingWallet } = useWallet();
+  const { address: walletAddress, openWalletChooser, isConnecting: isConnectingWallet } = useWallet();
 
   const visibleText = isPublicPreviewReady ? publicText : text;
   const wordCount = useMemo(() => (visibleText.trim() ? visibleText.trim().split(/\s+/).length : 0), [visibleText]);
@@ -372,7 +372,7 @@ export default function Home() {
 
         {isPublicPreviewReady && !verifiedAssessment && <div className="submission-bar">
           <div><p className="eyebrow">Submission check</p><p>Automatic redaction removed {redactionSummary?.total ?? 0} high-confidence items. It may miss context-specific details. Edit this copy until it is safe to disclose. No risk assessment has been made at this stage.</p>{entityDetectionNote && <p className="redaction-model-note">{entityDetectionNote}</p>}<label className="public-consent"><input type="checkbox" checked={publicTextApproved} disabled={isSubmitting} onChange={(event) => setPublicTextApproved(event.target.checked)} /><span>I reviewed this exact copy and approve it for assessment.</span></label></div>
-          <div className="submission-bar__action">{submissionStage && <p className="submission-stage" role="status">{submissionStage}</p>}{!walletAddress ? <button className="secondary-button public-submit" onClick={() => void connectWallet()} disabled={isConnectingWallet}>{isConnectingWallet ? "Connecting…" : "Connect wallet"}<span>↗</span></button> : <button className="secondary-button public-submit" onClick={() => void submitToGenLayer()} disabled={!canSubmitAssessment || isSubmitting}>{isSubmitting ? "Awaiting assessment…" : "Submit"}<span>↗</span></button>}</div>
+          <div className="submission-bar__action">{submissionStage && <p className="submission-stage" role="status">{submissionStage}</p>}{!walletAddress ? <button className="secondary-button public-submit" onClick={openWalletChooser} disabled={isConnectingWallet}>{isConnectingWallet ? "Connecting…" : "Connect wallet"}<span>↗</span></button> : <button className="secondary-button public-submit" onClick={() => void submitToGenLayer()} disabled={!canSubmitAssessment || isSubmitting}>{isSubmitting ? "Awaiting assessment…" : "Submit"}<span>↗</span></button>}</div>
         </div>}
       </section>
 
