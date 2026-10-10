@@ -12,6 +12,9 @@ function shortAddress(address: string) {
 function walletInitial(name: string) {
   if (name === "Rabby Wallet") return "R";
   if (name === "Trust Wallet") return "T";
+  if (name === "Phantom") return "P";
+  if (name === "OKX Wallet") return "O";
+  if (name === "Coinbase Wallet") return "C";
   if (name === "MetaMask") return "M";
   return "W";
 }
@@ -56,7 +59,7 @@ export function AppNav() {
         <p className="wallet-picker__lede">Connect with a wallet that supports custom EVM networks. Clause will ask it to add or switch to GenLayer Studionet.</p>
         {wallets.length > 0 ? <div className="wallet-picker__options">
           {wallets.map((wallet) => <button className="wallet-option" key={wallet.id} onClick={() => void connect(wallet.id).catch(() => undefined)} disabled={isConnecting}>
-            <span className="wallet-option__mark" aria-hidden="true">{walletInitial(wallet.name)}</span>
+            <span className={`wallet-option__mark${wallet.icon ? " wallet-option__mark--logo" : ""}`} aria-hidden="true">{wallet.icon ? <img src={wallet.icon} alt="" /> : walletInitial(wallet.name)}</span>
             <span>{wallet.name}</span>
             <span aria-hidden="true">→</span>
           </button>)}

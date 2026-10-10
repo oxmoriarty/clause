@@ -44,11 +44,17 @@ export type BrowserProvider = {
   isRabby?: boolean;
   isTrust?: boolean;
   isTrustWallet?: boolean;
+  isPhantom?: boolean;
+  isOkxWallet?: boolean;
+  isOKXWallet?: boolean;
+  isOKExWallet?: boolean;
+  isCoinbaseWallet?: boolean;
 };
 
 export type WalletOption = {
   id: string;
   name: string;
+  icon?: string;
   provider: BrowserProvider;
 };
 
@@ -71,35 +77,109 @@ let activeWalletProvider: BrowserProvider | null = null;
 function walletName(provider: BrowserProvider, announcedName?: string) {
   if (provider.isRabby) return "Rabby Wallet";
   if (provider.isTrust || provider.isTrustWallet) return "Trust Wallet";
+  if (provider.isPhantom) return "Phantom";
+  if (provider.isOkxWallet || provider.isOKXWallet || provider.isOKExWallet) return "OKX Wallet";
+  if (provider.isCoinbaseWallet) return "Coinbase Wallet";
+  // EIP-6963 is the wallet's explicit self-identification. Prefer it over
+  // compatibility flags because several wallets intentionally set isMetaMask.
+  if (announcedName?.trim()) return announcedName.trim();
   if (provider.isMetaMask) return "MetaMask";
-  return announcedName?.trim() || "Browser wallet";
+  return "Browser wallet";
 }
 
 function walletId(provider: BrowserProvider, index: number, announcedId?: string) {
   if (announcedId) return announcedId;
   if (provider.isRabby) return "io.rabby";
   if (provider.isTrust || provider.isTrustWallet) return "com.trustwallet";
+  if (provider.isPhantom) return "app.phantom";
+  if (provider.isOkxWallet || provider.isOKXWallet || provider.isOKExWallet) return "com.okex.wallet";
+  if (provider.isCoinbaseWallet) return "org.coinbase.wallet";
   if (provider.isMetaMask) return "io.metamask";
   return `browser-wallet-${index}`;
+}
+
+function safeWalletIcon(icon?: string) {
+  if (!icon) return undefined;
+  const value = icon.trim();
+  return /^(data:image\/(?:svg\+xml|png|webp|jpeg|gif);|https:\/\/)/i.test(value) ? value : undefined;
+}
+
+function walletPriority(wallet: WalletOption) {
+  const identity = `${wallet.id} ${wallet.name}`.toLowerCase();
+  if (identity.includes("metamask")) return 0;
+  if (identity.includes("rabby")) return 1;
+  return 2;
 }
 
 export async function discoverWallets(): Promise<WalletOption[]> {
   if (typeof window === "undefined") return [];
 
   const options: WalletOption[] = [];
-  const seenProviders = new Set<BrowserProvider>();
-  const add = (provider: BrowserProvider | undefined, announced?: { name?: string; rdns?: string }) => {
-    if (!provider || typeof provider.request !== "function" || seenProviders.has(provider)) return;
-    seenProviders.add(provider);
-    options.push({
-      id: walletId(provider, options.length, announced?.rdns),
-      name: walletName(provider, announced?.name),
+  const walletsByIdentity = new Map<string, WalletOption>();
+  const walletsByProvider = new Map<BrowserProvider, { identity: string; wallet: WalletOption }>();
+  const add = (provider: BrowserProvider | undefined, announced?: { name?: string; rdns?: string; icon?: string }) => {
+    if (!provider || typeof provider.request !== "function") return;
+    const id = walletId(provider, options.length, announced?.rdns);
+    const name = walletName(provider, announced?.name);
+    const icon = safeWalletIcon(announced?.icon);
+    // Extensions can surface the same wallet through EIP-6963, the legacy
+    // `window.ethereum.providers` array, and a top-level provider wrapper.
+    // Object references differ between those paths, so dedupe by wallet ID
+    // (or its announced name when a wallet does not provide an ID).
+    const identity = announced?.rdns?.trim().toLowerCase()
+      ?? (id.startsWith("browser-wallet-") ? `name:${name.toLowerCase()}` : id.toLowerCase());
+    const sameProvider = walletsByProvider.get(provider);
+    if (sameProvider) {
+      if (sameProvider.identity === identity) {
+        if (icon) sameProvider.wallet.icon = icon;
+        if (announced?.rdns) sameProvider.wallet.provider = provider;
+        return;
+      }
+
+      // An extension may first arrive through the old injected-provider API,
+      // then identify itself precisely through EIP-6963. Upgrade that entry
+      // so it keeps the extension's official name and icon.
+      const matchingWallet = walletsByIdentity.get(identity);
+      if (matchingWallet && matchingWallet !== sameProvider.wallet) {
+        if (icon) matchingWallet.icon = icon;
+        if (announced?.rdns) matchingWallet.provider = provider;
+        walletsByIdentity.delete(sameProvider.identity);
+        const oldIndex = options.indexOf(sameProvider.wallet);
+        if (oldIndex >= 0) options.splice(oldIndex, 1);
+        walletsByProvider.set(provider, { identity, wallet: matchingWallet });
+        return;
+      }
+
+      walletsByIdentity.delete(sameProvider.identity);
+      sameProvider.wallet.id = id;
+      sameProvider.wallet.name = name;
+      if (icon) sameProvider.wallet.icon = icon;
+      if (announced?.rdns) sameProvider.wallet.provider = provider;
+      walletsByIdentity.set(identity, sameProvider.wallet);
+      walletsByProvider.set(provider, { identity, wallet: sameProvider.wallet });
+      return;
+    }
+
+    const existing = walletsByIdentity.get(identity);
+    if (existing) {
+      if (icon) existing.icon = icon;
+      if (announced?.rdns) existing.provider = provider;
+      walletsByProvider.set(provider, { identity, wallet: existing });
+      return;
+    }
+    const option: WalletOption = {
+      id,
+      name,
+      icon,
       provider,
-    });
+    };
+    walletsByIdentity.set(identity, option);
+    walletsByProvider.set(provider, { identity, wallet: option });
+    options.push(option);
   };
 
   const announce = (event: Event) => {
-    const detail = (event as CustomEvent<{ info?: { name?: string; rdns?: string }; provider?: BrowserProvider }>).detail;
+    const detail = (event as CustomEvent<{ info?: { name?: string; rdns?: string; icon?: string }; provider?: BrowserProvider }>).detail;
     add(detail?.provider, detail?.info);
   };
 
@@ -116,7 +196,7 @@ export async function discoverWallets(): Promise<WalletOption[]> {
   await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
   window.removeEventListener("eip6963:announceProvider", announce);
 
-  return options;
+  return options.sort((first, second) => walletPriority(first) - walletPriority(second) || first.name.localeCompare(second.name));
 }
 
 export function setActiveWalletProvider(provider: BrowserProvider | null) {
