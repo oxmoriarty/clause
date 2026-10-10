@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
-import { isContractConfigured, submitForStudionetAssessment, type VerifiedAssessment, userFacingSubmissionError } from "@/lib/genlayer";
+import { AssessmentStillPendingError, contractAddress, isContractConfigured, submitStudionetAssessment, type VerifiedAssessment, userFacingSubmissionError, waitForStudionetAssessment } from "@/lib/genlayer";
 import { redactSensitiveTextWithLocalNer, type RedactionSummary } from "@/lib/redaction";
 import { AppNav } from "@/components/app-nav";
 import { ProtectedPage } from "@/components/protected-page";
@@ -20,6 +20,15 @@ const demoAgreement = [
 ].join("\n");
 
 const severityLevels = ["high", "moderate", "low"] as const;
+
+type PendingAssessment = {
+  transactionHash: string;
+  publicText: string;
+};
+
+function pendingAssessmentStorageKey(walletAddress: string) {
+  return `clause:pending-assessment:v1:${contractAddress.toLowerCase()}:${walletAddress.toLowerCase()}`;
+}
 
 function AttentionMark({ level }: { level: string }) {
   return <span className={["attention attention--", level.replaceAll("_", "-")].join("")}>{level.replaceAll("_", " ")}</span>;
@@ -48,8 +57,12 @@ export default function Home() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [publicTextApproved, setPublicTextApproved] = useState(false);
+  const [assessmentDisclaimerAccepted, setAssessmentDisclaimerAccepted] = useState(false);
   const [submissionStage, setSubmissionStage] = useState<string | null>(null);
   const [verifiedAssessment, setVerifiedAssessment] = useState<VerifiedAssessment | null>(null);
+  const [pendingTransactionHash, setPendingTransactionHash] = useState<string | null>(null);
+  const [isTrackingPending, setIsTrackingPending] = useState(false);
+  const [trackingAttempt, setTrackingAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const previewRun = useRef(0);
   const uploadRun = useRef(0);
@@ -62,8 +75,8 @@ export default function Home() {
   const visibleText = isPublicPreviewReady ? publicText : text;
   const wordCount = useMemo(() => (visibleText.trim() ? visibleText.trim().split(/\s+/).length : 0), [visibleText]);
   const hasSubmittablePublicText = publicText.trim().length >= 20 && publicText.length <= 50_000;
-  const canSubmitAssessment = Boolean(isPublicPreviewReady && walletAddress && publicTextApproved && isContractConfigured && hasSubmittablePublicText);
-  const isPublicTextLocked = isAssessing || isSubmitting || Boolean(verifiedAssessment);
+  const canSubmitAssessment = Boolean(isPublicPreviewReady && walletAddress && publicTextApproved && assessmentDisclaimerAccepted && isContractConfigured && hasSubmittablePublicText);
+  const isPublicTextLocked = isAssessing || isSubmitting || Boolean(pendingTransactionHash) || Boolean(verifiedAssessment);
   const findingSeverityCounts = useMemo(() => severityLevels.map((severity) => ({
     severity,
     count: verifiedAssessment?.findings.filter((finding) => finding.severity === severity).length ?? 0,
@@ -81,6 +94,64 @@ export default function Home() {
     return () => window.cancelAnimationFrame(frame);
   }, [verifiedAssessment]);
 
+  useEffect(() => {
+    if (!walletAddress || !isContractConfigured) return;
+
+    try {
+      const stored = window.localStorage.getItem(pendingAssessmentStorageKey(walletAddress));
+      if (!stored) return;
+      const pending = JSON.parse(stored) as Partial<PendingAssessment>;
+      if (typeof pending.transactionHash !== "string" || typeof pending.publicText !== "string") return;
+      setPublicText(pending.publicText);
+      setIsPublicPreviewReady(true);
+      setPublicTextApproved(true);
+      setAssessmentDisclaimerAccepted(true);
+      setPendingTransactionHash(pending.transactionHash);
+      setSubmissionStage("Your contract is still being assessed. You can leave this page and return later.");
+    } catch {
+      window.localStorage.removeItem(pendingAssessmentStorageKey(walletAddress));
+    }
+  }, [walletAddress]);
+
+  useEffect(() => {
+    if (!pendingTransactionHash || !walletAddress) return;
+    const activeTransactionHash = pendingTransactionHash;
+    const activeWalletAddress = walletAddress;
+    let active = true;
+    let retryTimer: number | undefined;
+
+    async function trackPendingAssessment() {
+      setIsTrackingPending(true);
+      try {
+        const assessment = await waitForStudionetAssessment({ transactionHash: activeTransactionHash, onStage: setSubmissionStage });
+        if (!active) return;
+        window.localStorage.removeItem(pendingAssessmentStorageKey(activeWalletAddress));
+        setPendingTransactionHash(null);
+        setVerifiedAssessment(assessment);
+        setSubmissionStage("Your report is ready.");
+      } catch (caught) {
+        if (!active) return;
+        if (caught instanceof AssessmentStillPendingError) {
+          setSubmissionStage("Your contract is still being assessed. You can leave this page and return later.");
+          retryTimer = window.setTimeout(() => setTrackingAttempt((attempt) => attempt + 1), 15_000);
+          return;
+        }
+        window.localStorage.removeItem(pendingAssessmentStorageKey(activeWalletAddress));
+        setPendingTransactionHash(null);
+        setSubmissionStage(null);
+        setError(userFacingSubmissionError(caught));
+      } finally {
+        if (active) setIsTrackingPending(false);
+      }
+    }
+
+    void trackPendingAssessment();
+    return () => {
+      active = false;
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, [pendingTransactionHash, trackingAttempt, walletAddress]);
+
   function resetPreview() {
     setIsPublicPreviewReady(false);
     setPublicText("");
@@ -88,6 +159,7 @@ export default function Home() {
     setEntityDetection(null);
     setEntityDetectionNote(null);
     setPublicTextApproved(false);
+    setAssessmentDisclaimerAccepted(false);
     setVerifiedAssessment(null);
     setSubmissionStage(null);
   }
@@ -106,6 +178,7 @@ export default function Home() {
       setEntityDetectionNote(redacted.entityDetectionNote ?? null);
       setIsPublicPreviewReady(true);
       setPublicTextApproved(false);
+      setAssessmentDisclaimerAccepted(false);
       setVerifiedAssessment(null);
     } catch (caught) {
       if (previewRun.current !== run) return;
@@ -135,6 +208,10 @@ export default function Home() {
       setError("Review and approve the redacted copy before requesting an assessment.");
       return;
     }
+    if (!assessmentDisclaimerAccepted) {
+      setError("Confirm that you understand the limits of Clause assessments before requesting an assessment.");
+      return;
+    }
     if (!hasSubmittablePublicText) {
       setError("The approved public copy must contain between 20 and 50,000 characters.");
       return;
@@ -143,9 +220,12 @@ export default function Home() {
     setIsSubmitting(true);
     setSubmissionStage("Preparing your public submission…");
     try {
-      const result = await submitForStudionetAssessment({ contractText: publicText.trim(), onStage: setSubmissionStage });
-      setVerifiedAssessment(result.assessment);
-      setSubmissionStage("Your report is ready.");
+      const result = await submitStudionetAssessment({ contractText: publicText.trim(), onStage: setSubmissionStage });
+      const pending: PendingAssessment = { transactionHash: result.transactionHash, publicText: publicText.trim() };
+      window.localStorage.setItem(pendingAssessmentStorageKey(walletAddress), JSON.stringify(pending));
+      setPendingTransactionHash(result.transactionHash);
+      setTrackingAttempt((attempt) => attempt + 1);
+      setSubmissionStage("Your contract is being assessed. You can leave this page and return later.");
     } catch (caught) {
       setError(userFacingSubmissionError(caught));
       setSubmissionStage(null);
@@ -363,7 +443,7 @@ export default function Home() {
               setVerifiedAssessment(null);
             }} placeholder="Paste the contract text here. Clause will create a private preview and a redacted, editable review copy." />
             <div className="paste-panel__bottom">
-              {isPublicPreviewReady ? <><span className="redaction-count">{redactionSummary?.total ?? 0} automatic redactions</span><button className="text-button" onClick={() => void analyze()} disabled={isPublicTextLocked || isReadingUpload}>Recreate redacted copy</button></> : <><button className="text-button" onClick={() => { setText(demoAgreement); resetPreview(); }} disabled={isAssessing || isReadingUpload}>Use sample agreement</button><button className="primary-button" onClick={() => void analyze()} disabled={isAssessing || isReadingUpload || text.trim().length < 80}>{isAssessing ? "Creating private copy…" : "Create private copy"}<span>→</span></button></>}
+              {isPublicPreviewReady ? <><span className="redaction-count">{redactionSummary?.total ?? 0} automatic redactions</span><button className="text-button" onClick={() => void analyze()} disabled={isPublicTextLocked || isReadingUpload}>Recreate redacted copy</button></> : <><button className="text-button" onClick={() => { setText(demoAgreement); resetPreview(); }} disabled={isAssessing || isReadingUpload}>Use sample agreement</button><button className="primary-button" onClick={() => void analyze()} disabled={isAssessing || isReadingUpload || text.trim().length < 80}>{isAssessing ? "Creating public copy…" : "Create public copy"}<span>→</span></button></>}
             </div>
           </div>
         </div>
@@ -371,8 +451,8 @@ export default function Home() {
         {error && <p className="message message--error" role="alert">{error}</p>}
 
         {isPublicPreviewReady && !verifiedAssessment && <div className="submission-bar">
-          <div><p className="eyebrow">Submission check</p><p>Automatic redaction removed {redactionSummary?.total ?? 0} high-confidence items. It may miss context-specific details. Edit this copy until it is safe to disclose. No risk assessment has been made at this stage.</p>{entityDetectionNote && <p className="redaction-model-note">{entityDetectionNote}</p>}<label className="public-consent"><input type="checkbox" checked={publicTextApproved} disabled={isSubmitting} onChange={(event) => setPublicTextApproved(event.target.checked)} /><span>I reviewed this exact copy and approve it for assessment.</span></label></div>
-          <div className="submission-bar__action">{submissionStage && <p className="submission-stage" role="status">{submissionStage}</p>}{!walletAddress ? <button className="secondary-button public-submit" onClick={openWalletChooser} disabled={isConnectingWallet}>{isConnectingWallet ? "Connecting…" : "Connect wallet"}<span>↗</span></button> : <button className="secondary-button public-submit" onClick={() => void submitToGenLayer()} disabled={!canSubmitAssessment || isSubmitting}>{isSubmitting ? "Awaiting assessment…" : "Submit"}<span>↗</span></button>}</div>
+          <div><p className="eyebrow">Submission check</p><p>{pendingTransactionHash ? "Your approved public copy is locked while GenLayer completes this assessment." : `Automatic redaction removed ${redactionSummary?.total ?? 0} high-confidence items. It may miss context-specific details. Edit this copy until it is safe to disclose. No risk assessment has been made at this stage.`}</p>{entityDetectionNote && !pendingTransactionHash && <p className="redaction-model-note">{entityDetectionNote}</p>}<label className="public-consent"><input type="checkbox" checked={publicTextApproved} disabled={isSubmitting || Boolean(pendingTransactionHash)} onChange={(event) => setPublicTextApproved(event.target.checked)} /><span>I reviewed this exact copy and approve it for assessment.</span></label><label className="public-consent public-consent--disclaimer"><input type="checkbox" checked={assessmentDisclaimerAccepted} disabled={isSubmitting || Boolean(pendingTransactionHash)} onChange={(event) => setAssessmentDisclaimerAccepted(event.target.checked)} /><span>I understand that Clause provides an AI-assisted contract risk assessment, not legal advice, and does not guarantee that every risk or issue will be identified.</span></label></div>
+          <div className="submission-bar__action">{submissionStage && <p className="submission-stage" role="status">{submissionStage}</p>}{pendingTransactionHash ? <><p className="pending-transaction" title={pendingTransactionHash}>Transaction ID<br /><code>{pendingTransactionHash}</code></p><button className="text-button pending-transaction__check" onClick={() => setTrackingAttempt((attempt) => attempt + 1)} disabled={isTrackingPending}>{isTrackingPending ? "Checking assessment…" : "Check assessment status"}</button></> : !walletAddress ? <button className="secondary-button public-submit" onClick={openWalletChooser} disabled={isConnectingWallet}>{isConnectingWallet ? "Connecting…" : "Connect wallet"}<span>↗</span></button> : <button className="secondary-button public-submit" onClick={() => void submitToGenLayer()} disabled={!canSubmitAssessment || isSubmitting}>{isSubmitting ? "Awaiting assessment…" : "Submit"}<span>↗</span></button>}</div>
         </div>}
       </section>
 

@@ -132,7 +132,7 @@ function historyAddressCandidates(walletAddress: string) {
   ].filter((address): address is string => Boolean(address)))];
 }
 const consensusPollIntervalMs = 3_000;
-const consensusPollRetries = 120;
+const assessmentPollRetries = 20;
 
 export const contractAddress = process.env.NEXT_PUBLIC_CLAUSE_CONTRACT_ADDRESS ?? "";
 export const isContractConfigured = addressPattern.test(contractAddress);
@@ -336,13 +336,40 @@ export async function connectStudionetWallet({
   return account;
 }
 
-export async function submitForStudionetAssessment({
+export class AssessmentStillPendingError extends Error {
+  transactionHash: string;
+
+  constructor(transactionHash: string) {
+    super("The transaction is still being assessed on GenLayer.");
+    this.name = "AssessmentStillPendingError";
+    this.transactionHash = transactionHash;
+  }
+}
+
+function assessmentFromFinalReceipt(receipt: ReceiptWithConsensus): VerifiedAssessment {
+  const finalConsensusResult = receipt.resultName ?? receipt.result_name;
+  if (finalConsensusResult === "MAJORITY_DISAGREE") {
+    throw new Error("Clause finished assessing this contract, but the validators could not reach a shared result. No report was created or saved. You can revise the approved copy or try again.");
+  }
+  if (finalConsensusResult !== "MAJORITY_AGREE") {
+    throw new Error("Clause finished processing this contract without a verified assessment result. No report was created or saved. Please try again.");
+  }
+
+  const leaderResult = getAssessmentResult(receipt.consensus_data?.leader_receipt?.[0]?.result);
+  return parseAssessment(leaderResult);
+}
+
+function isWaitTimeout(error: unknown) {
+  return error instanceof Error && /timed out waiting for transaction/i.test(error.message);
+}
+
+export async function submitStudionetAssessment({
   contractText,
   onStage,
 }: {
   contractText: string;
   onStage?: (stage: string) => void;
-}): Promise<{ assessment: VerifiedAssessment; transactionHash: string; account: string }> {
+}): Promise<{ transactionHash: string; account: string }> {
   if (!isContractConfigured) {
     throw new Error(
       "This Clause deployment has no Studionet contract address yet. Add NEXT_PUBLIC_CLAUSE_CONTRACT_ADDRESS to .env.local and restart the app.",
@@ -366,25 +393,31 @@ export async function submitForStudionetAssessment({
     value: BigInt(0),
   });
 
+  return { transactionHash, account };
+}
+
+export async function waitForStudionetAssessment({
+  transactionHash,
+  onStage,
+}: {
+  transactionHash: string;
+  onStage?: (stage: string) => void;
+}): Promise<VerifiedAssessment> {
   onStage?.("Your contract is being assessed. This can take a little while…");
-  const receipt = (await client.waitForTransactionReceipt({
-    hash: transactionHash,
-    // FINALIZED is terminal: it covers both an accepted assessment and an
-    // undetermined one. Waiting only for ACCEPTED makes an undetermined
-    // transaction look like a timeout even after Studio has finished it.
-    status: TransactionStatus.FINALIZED,
-    interval: consensusPollIntervalMs,
-    retries: consensusPollRetries,
-  })) as ReceiptWithConsensus;
+  try {
+    const receipt = (await createClient({ chain: studionet }).waitForTransactionReceipt({
+      hash: transactionHash as never,
+      // FINALIZED is terminal: it covers both an accepted assessment and an
+      // undetermined one. Waiting only for ACCEPTED makes an undetermined
+      // transaction look like a timeout even after Studio has finished it.
+      status: TransactionStatus.FINALIZED,
+      interval: consensusPollIntervalMs,
+      retries: assessmentPollRetries,
+    })) as ReceiptWithConsensus;
 
-  const finalConsensusResult = receipt.resultName ?? receipt.result_name;
-  if (finalConsensusResult === "MAJORITY_DISAGREE") {
-    throw new Error("Clause finished assessing this contract, but the validators could not reach a shared result. No report was created or saved. You can revise the approved copy or try again.");
+    return assessmentFromFinalReceipt(receipt);
+  } catch (error) {
+    if (isWaitTimeout(error)) throw new AssessmentStillPendingError(transactionHash);
+    throw error;
   }
-  if (finalConsensusResult !== "MAJORITY_AGREE") {
-    throw new Error("Clause finished processing this contract without a verified assessment result. No report was created or saved. Please try again.");
-  }
-
-  const leaderResult = getAssessmentResult(receipt.consensus_data?.leader_receipt?.[0]?.result);
-  return { assessment: parseAssessment(leaderResult), transactionHash, account };
 }
