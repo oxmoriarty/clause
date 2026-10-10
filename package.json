@@ -9,7 +9,9 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@genlayer/transaction-kit": "github:genlayerlabs/genlayer-transaction-kit#pkg/core",
     "@huggingface/transformers": "3.8.1",
+    "@walletconnect/ethereum-provider": "^2.26.0",
     "genlayer-js": "1.1.8",
     "mammoth": "^1.13.0",
     "next": "16.1.0",
