@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
-import { isContractConfigured, submitForStudionetAssessment, type VerifiedAssessment } from "@/lib/genlayer";
+import { isContractConfigured, submitForStudionetAssessment, type VerifiedAssessment, userFacingSubmissionError } from "@/lib/genlayer";
 import { redactSensitiveTextWithLocalNer, type RedactionSummary } from "@/lib/redaction";
 import { AppNav } from "@/components/app-nav";
 import { ProtectedPage } from "@/components/protected-page";
@@ -147,7 +147,7 @@ export default function Home() {
       setVerifiedAssessment(result.assessment);
       setSubmissionStage("Your report is ready.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "We could not submit the assessment.");
+      setError(userFacingSubmissionError(caught));
       setSubmissionStage(null);
     } finally {
       setIsSubmitting(false);

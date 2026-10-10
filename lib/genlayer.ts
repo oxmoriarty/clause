@@ -45,6 +45,8 @@ type ReceiptWithConsensus = {
   statusName?: string;
   // The SDK's simplified browser receipt converts statusName to snake_case.
   status_name?: string;
+  resultName?: string;
+  result_name?: string;
   consensus_data?: {
     leader_receipt?: Array<{ result?: unknown }>;
   };
@@ -72,11 +74,26 @@ function getBrowserProvider(): BrowserProvider {
 
   if (!provider) {
     throw new Error(
-      "A browser wallet is required for a Studionet submission. Install or unlock a compatible wallet, then try again.",
+      "A compatible browser wallet is required. On a phone, open Clause in your wallet app's built-in browser, connect your wallet, and try again.",
     );
   }
 
   return provider;
+}
+
+export function userFacingSubmissionError(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+
+  if (error && typeof error === "object") {
+    const walletError = error as { code?: unknown; message?: unknown; shortMessage?: unknown };
+    if (walletError.code === 4001) return "You cancelled the wallet request. No assessment was submitted.";
+    if (walletError.code === 4900 || walletError.code === 4901) return "Your wallet disconnected. Reconnect it and try again.";
+    if (walletError.code === 4902) return "Your wallet could not add or switch to GenLayer Studionet. Open Clause in a compatible wallet browser and try again.";
+    const message = typeof walletError.shortMessage === "string" ? walletError.shortMessage : walletError.message;
+    if (typeof message === "string" && message.trim()) return message.trim();
+  }
+
+  return "We could not submit the assessment. Check your wallet connection and try again.";
 }
 
 function parseAssessment(value: string): VerifiedAssessment {
@@ -255,17 +272,20 @@ export async function submitForStudionetAssessment({
   onStage?.("Your contract is being assessed. This can take a little while…");
   const receipt = (await client.waitForTransactionReceipt({
     hash: transactionHash,
-    status: TransactionStatus.ACCEPTED,
-    // GenLayer validators must independently analyse the contract before
-    // consensus can be accepted. The SDK defaults to a 30-second wait, which
-    // is routinely too short for an LLM-backed Studionet assessment.
+    // FINALIZED is terminal: it covers both an accepted assessment and an
+    // undetermined one. Waiting only for ACCEPTED makes an undetermined
+    // transaction look like a timeout even after Studio has finished it.
+    status: TransactionStatus.FINALIZED,
     interval: consensusPollIntervalMs,
     retries: consensusPollRetries,
   })) as ReceiptWithConsensus;
 
-  const consensusStatus = receipt.statusName ?? receipt.status_name;
-  if (consensusStatus !== TransactionStatus.ACCEPTED) {
-    throw new Error(`The assessment did not reach consensus: ${consensusStatus ?? "unknown status"}.`);
+  const finalConsensusResult = receipt.resultName ?? receipt.result_name;
+  if (finalConsensusResult === "MAJORITY_DISAGREE") {
+    throw new Error("Clause finished assessing this contract, but the validators could not reach a shared result. No report was created or saved. You can revise the approved copy or try again.");
+  }
+  if (finalConsensusResult !== "MAJORITY_AGREE") {
+    throw new Error("Clause finished processing this contract without a verified assessment result. No report was created or saved. Please try again.");
   }
 
   const leaderResult = getAssessmentResult(receipt.consensus_data?.leader_receipt?.[0]?.result);
