@@ -70,6 +70,7 @@ export default function Home() {
   const cameraVideo = useRef<HTMLVideoElement | null>(null);
   const cameraStream = useRef<MediaStream | null>(null);
   const cameraRun = useRef(0);
+  const agreementInput = useRef<HTMLTextAreaElement | null>(null);
   const { address: walletAddress, openWalletChooser, isConnecting: isConnectingWallet } = useWallet();
 
   const visibleText = isPublicPreviewReady ? publicText : text;
@@ -162,6 +163,20 @@ export default function Home() {
     setAssessmentDisclaimerAccepted(false);
     setVerifiedAssessment(null);
     setSubmissionStage(null);
+  }
+
+  function startNewAssessment() {
+    previewRun.current += 1;
+    uploadRun.current += 1;
+    setText("");
+    setFileName(null);
+    setError(null);
+    resetPreview();
+
+    window.requestAnimationFrame(() => {
+      document.getElementById("workspace-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      agreementInput.current?.focus({ preventScroll: true });
+    });
   }
 
   async function analyze() {
@@ -438,7 +453,7 @@ export default function Home() {
             <div className="paste-panel__top"><label htmlFor="agreement">{isPublicPreviewReady ? "Editable public-safe copy" : "Or paste it here"}</label><span>{wordCount.toLocaleString()} words</span></div>
             {isPublicPreviewReady && <p className="redaction-banner"><span>●</span> {entityDetection === "local_model" ? "Local name, organization and location detection plus privacy rules ran in your browser." : "Built-in privacy rules ran locally."} No contract assessment has been performed.</p>}
             {isAssessing && <div className="redaction-processing" role="status" aria-live="polite"><div className="redaction-processing__copy"><span className="redaction-processing__pulse" aria-hidden="true" /><div><strong>Creating your private preview</strong><p>Clause is finding sensitive details locally. Your text and document controls are locked until the redacted copy is ready.</p></div></div><button className="redaction-processing__cancel" onClick={cancelPreview}>Cancel</button><div className="redaction-processing__bar" role="progressbar" aria-label="Creating private preview" aria-valuetext="Redacting sensitive information locally"><span /></div></div>}
-            <textarea id="agreement" value={visibleText} disabled={isAssessing || isReadingUpload} readOnly={isPublicTextLocked} aria-readonly={isPublicTextLocked} onChange={(event) => {
+            <textarea ref={agreementInput} id="agreement" value={visibleText} disabled={isAssessing || isReadingUpload} readOnly={isPublicTextLocked} aria-readonly={isPublicTextLocked} onChange={(event) => {
               if (isPublicPreviewReady) { setPublicText(event.target.value); setPublicTextApproved(false); } else { setText(event.target.value); }
               setVerifiedAssessment(null);
             }} placeholder="Paste the contract text here. Clause will create a private preview and a redacted, editable review copy." />
@@ -457,7 +472,7 @@ export default function Home() {
       </section>
 
       {verifiedAssessment && <section className="assessment shell verified-assessment" id="verified-assessment" aria-labelledby="verified-title">
-        <div className="assessment__top"><div><h2 id="verified-title">Your contract assessment is ready.</h2></div><AttentionMark level={verifiedAssessment.conclusion} /></div>
+        <div className="assessment__top"><div><h2 id="verified-title">Your contract assessment is ready.</h2></div><div className="assessment__actions"><AttentionMark level={verifiedAssessment.conclusion} /><button className="primary-button report-new-assessment" onClick={startNewAssessment}>Assess another contract<span>→</span></button></div></div>
         <div className="verified-summary"><div><p className="brief-summary__label">Consensus conclusion</p><h3>{conclusionLabel(verifiedAssessment.conclusion)}</h3></div><dl><div><dt>Assessment</dt><dd>#{verifiedAssessment.assessment_id}</dd></div>{findingSeverityCounts.map(({ severity, count }) => <div key={severity}><dt>{severity}</dt><dd>{count}</dd></div>)}</dl></div>
         <div className="findings-header"><p className="eyebrow">Consensus findings</p><span>{verifiedAssessment.findings.length} found</span></div>
         <div className="findings">{verifiedAssessment.findings.map((finding) => <article className="finding" key={finding.id}><div className="finding__meta"><AttentionMark level={finding.severity} /><span>{finding.category}</span></div><h3>{finding.clause_reference}</h3><p>{finding.summary}</p><div className="finding__ask"><span>Consider asking</span>{finding.question}</div></article>)}</div>
