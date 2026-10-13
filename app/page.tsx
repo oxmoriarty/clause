@@ -31,9 +31,9 @@ export default function Home() {
       </div>
     </section>
     <section className="landing-principles shell" aria-label="How Clause works">
-      <article><span>01</span><h2>Prepare privately.</h2><p>Upload, paste, or scan a contract. Clause creates an editable redacted version locally in your browser.</p></article>
-      <article><span>02</span><h2>Approve deliberately.</h2><p>Review the exact public-safe text before it ever reaches GenLayer.</p></article>
-      <article><span>03</span><h2>Return with confidence.</h2><p>Independent validators assess practical risks, then your report stays linked to your wallet history.</p></article>
+      <article><span>01</span><h2>Upload your contract.</h2><p>Upload, paste, or scan a contract to get an editable redacted version.</p></article>
+      <article><span>02</span><h2>Review the public copy.</h2><p>Review the redacted, public-safe copy before it is assessed.</p></article>
+      <article><span>03</span><h2>Get your assessment.</h2><p>Submit the approved copy to receive a report of practical risks.</p></article>
     </section>
   </main>;
 }
